@@ -1,69 +1,127 @@
+import os
+from flask import Flask, render_template, request, jsonify
 from FlagEmbedding import FlagReranker
-
-# ESSAI 1 -> Les messages sont mal classifiés. J'essaie un autre modèle
-#reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True) # Setting use_fp16 to True speeds up computation with a slight performance degradation
-
-# You can map the scores into 0-1 by set "normalize=True", which will apply sigmoid function to the score
-#scores = reranker.compute_score([['I want to return the article, it does not fit me and I hate it','Rage'],
-#                                 ['I want to return the article, it does not fit me and I hate it','disapointment'],
-#                                 ['I want to return the article, it does not fit me and I hate it','article']],normalize=True)
-#print(scores) # [0.00027803096387751553, 0.9948403768236574]
-
-# =====================
-
-# ESSAI 2 ne permet pas de spécifier les catgories moi-même
-
-#from transformers import pipeline
-
-#classifier = pipeline(task="text-classification", model="SamLowe/roberta-base-go_emotions", top_k=None)
-
-#sentences = ["Hello, could you provide more details about the features of this product? I would like to know if it is available in multiple colors."]
-
-#model_outputs = classifier(sentences)
-#print(model_outputs[0])
-# produces a list of dicts for each of the labels
-
-
-# ESSAI 3 avec un modèle rapide (on fera le fine tuning à la fin)
-
 from tenacity import retry, stop_after_attempt, wait_exponential
+from flask_caching import Cache
+import time
+from functools import wraps
+from collections import defaultdict
+from flask_cors import CORS
 
-from FlagEmbedding import FlagReranker
+app = Flask(__name__)
+CORS(app)
+# Configuration du cache
+cache = Cache(app, config={'CACHE_TYPE': 'simple'})
 
-def load_model():
-    try:
-        reranker = FlagReranker('BAAI/bge-reranker-large', use_fp16=True) # Setting use_fp16 to True = ++speed --performance
-    except Exception as e:
-        if e.contains('memory') or e.contains('does not exist'):
-            reranker = FlagReranker('BAAI/bge-reranker-base', use_fp16=False)
-    return reranker
+# Dictionnaire pour stocker l'historique des accès
+access_history = defaultdict(list)
+
+class ChatbotAPI:
+    def __init__(self, model_name, use_fp16=True):
+        self.reranker = FlagReranker(model_name, use_fp16=use_fp16)
+        self.tag_list = ['complaint', 'refund', 'query', 'inventory', 'satisfaction', 'irrelevant']
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1.5, min=4, max=10))
+    def chatbot_response(self, message):
+        scores = []
+        for e in self.tag_list:
+            score = self.reranker.compute_score([[e, message]], normalize=True)
+            scores.append([e, score])
+
+        sorted_data = sorted(scores, key=lambda x: x[1][0])
+        winner_tag = sorted_data[-1][0]
+        return f"Intent of the message : \"{winner_tag}\""
+
+
+# Création de deux instances de l'API
+primary_api = ChatbotAPI(model_name='BAAI/bge-reranker-large')
+secondary_api = ChatbotAPI(model_name='BAAI/bge-reranker-base')
+
+# =================== Définition des fonctions et routes =================
+
+# Décorateur pour enregistrer le code de statut et le timestamp
+def log_status(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        response = f(*args, **kwargs)
+        status_code = response[1] if isinstance(response, tuple) else 200
+        timestamp = time.time()
+        
+        # Stocker dans l'historique
+        key = request.path
+        access_history[key].append({
+            'status_code': status_code,
+            'timestamp': timestamp
+        })
+        
+        return response
+    return wrapper
 
 def check_user_message(message):
-    print(message)
-    if 'racist' in message:
-        return False
+    return 'race' not in message
 
-    else:
-        return True
+def count_server_error_rate_in_cache():
+    # Récupérer les données du cache
+    cache_data = access_history
 
+    # Initialiser le compteur
+    count_200, count_error = 0
+    server_error_list = [404, 410, 500, 503]
+    # 404 = Not Found | 410 = Forbidden | 500 = Internal Server Error | 503 = Service Unavailable
+    
 
-@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1.5, min=1, max=10))
-def chatbot_response(message):
+    # Parcourir toutes les entrées du cache
+    for path, accesses in cache_data.items():
+        for access in accesses:
+            if access['status_code'] == 200:
+                count_200 += 1
+            elif access['status_code'] in server_error_list :
+                count_error += 1
 
-    reranker = load_model()
+    return (count_200-count_error)/count_200
 
-    tag_list = ['complaint','refund','query','inventory','satisfaction']
-    scores = []
-    for e in tag_list:
-        score = reranker.compute_score([[e, message]], normalize=True)
-        print(e, ' : ', score)
-        scores.append([e, score])
+@app.route('/')
+@log_status
+def home():
+    return render_template('index.html')
 
-    sorted_data = sorted(scores, key=lambda x: x[1][0])
-    print(sorted_data)
-    print(sorted_data[-1][0])
+@app.route('/chat', methods=['POST'])
+@log_status
+def chat():
+    if not request.json or 'message' not in request.json:
+        return jsonify({'error': 'No message provided'}), 400
 
-#message = 'Hello, I received an item that does not match my order. How can I proceed to return it'
-message = 'iaeuyhsdgbqnsZKOZ22'
-message = 'how much of the product do you still have in stock?'
-chatbot_response(message)
+    user_message = request.json['message']
+    
+    if not check_user_message(user_message):
+        return jsonify({'error': 'Message check failed'}), 403
+
+    try:
+        # Essayer d'abord avec le LLM primaire
+        bot_response = primary_api.chatbot_response(user_message)
+    except Exception as e:
+        print(f"Primary API failed: {str(e)}")
+        try:
+            # En cas d'échec, utiliser le LLM secondaire
+            bot_response = secondary_api.chatbot_response(user_message)
+        except Exception as e:
+            print(f"Secondary API failed: {str(e)}")
+            return jsonify({'error': 'Both APIs failed'}), 500
+
+    return jsonify({'response': bot_response})
+
+@app.route('/consulter-status-cache')
+def consulter_status_cache():
+    formatted_history = {}
+    for path, accesses in access_history.items():
+        formatted_history[path] = [
+            {
+                'status_code': access['status_code'],
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(access['timestamp']))
+            }
+            for access in accesses
+        ]
+    return jsonify(formatted_history)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080)
