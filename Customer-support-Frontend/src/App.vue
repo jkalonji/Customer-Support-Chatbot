@@ -19,7 +19,101 @@
 </template>
 
 <script>
+import axios from 'axios';
 
+export default {
+  data() {
+    return {
+      message: '',
+      messages: [],
+      currentApiUrl: 'http://192.168.1.32:8080',
+      apiUrls: ['http://192.168.1.32:8080', 'http://192.168.1.32:8090'],
+      previousApiUrl: null
+    }
+  },
+  methods: {
+    async submitMessage() {
+      if (!this.message.trim()) return;
+
+      this.addMessage(this.message, 'user');
+      const userMessage = this.message;
+      this.message = '';
+      
+      try {
+        const response = await axios.post(`${this.currentApiUrl}/chat`, {
+          message: userMessage
+        });
+        this.addMessage(response.data, 'api');
+
+      } catch (error) {
+        console.log(error.code);
+        
+        if (error.code === 'ERR_NETWORK' || error.response?.status === 404) {
+          await this.switchApiAndCheck();
+          this.addMessage('Basculement vers une autre API, veuillez réessayer.', 'system');
+        } else {
+          this.addMessage('Message non valide, recommencez', 'error');
+        }
+      }
+    },
+
+    addMessage(text, type) {
+      this.messages.push({ text, type });
+      this.$nextTick(() => {
+        this.scrollToBottom();
+      });
+    },
+
+    scrollToBottom() {
+      const messageArea = this.$refs.messageArea;
+      messageArea.scrollTop = messageArea.scrollHeight;
+    },
+
+    async switchApiAndCheck() {
+      this.previousApiUrl = this.currentApiUrl;
+      this.switchApi();
+      
+      // Attendre un peu avant de vérifier l'ancienne API
+      await new Promise(resolve => setTimeout(resolve, 15000)); // attends 15 sec avant de tester le switch
+      
+      const checkResults = await this.checkPreviousApi();
+      if (checkResults.every(result => result === true)) {
+        this.switchApi(); // Revenir à l'API précédente
+        this.addMessage('L\'API précédente est de nouveau disponible. Retour à celle-ci.', 'system');
+      }
+    },
+    switchApi() {
+      this.currentApiUrl = this.apiUrls[(this.apiUrls.indexOf(this.currentApiUrl) + 1) % this.apiUrls.length];
+      console.log(`Switched to API: ${this.currentApiUrl}`);
+      this.addMessage(`Connexion à l'API: ${this.currentApiUrl}`, 'system');
+    },
+    async checkPreviousApi() { // Check avec exponential backoff
+      const maxRetries = 6;
+      const baseDelay = 1000; // Délai de base en millisecondes
+      const results = [];
+
+      for (let i = 0; i < maxRetries; i++) {
+        const delay = baseDelay * Math.pow(2, i); // Calcul du délai exponentiel
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+
+        try {
+          await axios.get(`${this.previousApiUrl}`);
+          results.push(true);
+          console.log(`Tentative ${i + 1} réussie après ${delay}ms`);
+          break;
+        } catch (error) {
+          results.push(false);
+          console.log(`Tentative ${i + 1} échouée après ${delay}ms`);
+        }
+      }
+
+      console.log(`Résultats des vérifications: ${results.join(', ')}`);
+      return results;
+    }
+
+  }
+}
 </script>
 
 
