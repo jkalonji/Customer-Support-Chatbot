@@ -46,15 +46,15 @@ Le projet est divisé en deux parties principales :
 
 
 3. Installation du backend :
-   
-    cd backend
 
+    cd customer-support-Backend
+   
     pip install -r requirements.txt
 
 
 5. Installation du frontend :
    
-    cd frontend
+    cd customer-support-Frontend
 
     npm install
 
@@ -63,14 +63,16 @@ Le projet est divisé en deux parties principales :
 ## Lancement de l'Application
 
 1. Démarrer le backend :
+
+    cd customer-support-Backend
    
-    python main.py
+    python CustomerSuppportChatbotBackend.py
 
 Cela lancera deux instances de serveur Flask sur les ports 8080 et 8090.
 
 2. Démarrer le frontend :
    
-    cd frontend
+    cd cd customer-support-Frontend
 
     npm run serve
 
@@ -82,6 +84,7 @@ Cela lancera deux instances de serveur Flask sur les ports 8080 et 8090.
 - Entrez un message dans le champ de texte et appuyez sur "Envoyer" ou la touche Entrée.
 - Le bot répondra avec l'intention détectée du message.
 - En cas d'erreur du serveur principal, l'application basculera automatiquement vers le serveur secondaire.
+- Une erreur 403 peut être déclenchéée en envoyant le mot 'racist'
 
 ## Contribution
 
