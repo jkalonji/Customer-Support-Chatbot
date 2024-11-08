@@ -1,6 +1,5 @@
 # Customer-Support-Chatbot
 
-# Dialog Chat Bot
 
 Ce projet est une application de chat bot avec une architecture client-serveur, utilisant Vue.js pour le frontend et Flask pour le backend. L'application intègre un système de basculement entre deux serveurs API pour assurer une haute disponibilité.
 
