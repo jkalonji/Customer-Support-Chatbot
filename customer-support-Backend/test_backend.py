@@ -2,7 +2,7 @@ import pytest
 from flask import json
 import time
 import signal
-from exercice_v4_2classes import App1 
+from CustomerSupportChatbotBackend import App1 
 
 @pytest.fixture
 def app():

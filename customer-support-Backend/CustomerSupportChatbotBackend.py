@@ -118,7 +118,7 @@ class App1:
         Compte en arrière-plan le taux d'erreur du serveur à intervalles réguliers.
 
         :param interval: Intervalle en secondes entre chaque comptage d'erreur.
-                         Par défaut, il est fixé à 3 secondes.
+                         Par défaut, je le fixe à 3 secondes.
         """
         while True:
             error_rate = self.count_server_error_rate_in_chat_cache()
